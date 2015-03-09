@@ -246,6 +246,62 @@ class File(db.Model):
     file_permissions = db.Column(db.Text)
     file_type = db.Column(db.Text)
 
+class Track(db.Model):
+    __tablename__ = 'tracks'
+    __table_args__ = {u'schema': __schema__}
+
+    id = db.Column(db.Integer, primary_key=True)
+    asset_id = db.Column(db.ForeignKey(u'' + __schema__ + '.assets.id'), nullable=False)
+    track_start = db.Column(db.Date)
+    track_end = db.Column(db.Date)
+    geo_location = db.Column(Geometry(geometry_type='GEOMETRY', srid=-1, dimension=3, spatial_index=True, management=True))
+
+    asset = db.relationship(u'Asset')
+
+    @hybrid_property
+    def geojson(self):
+        return json.loads(db.session.scalar(func.ST_AsGeoJSON(self.geo_location)))
+
+    @hybrid_property
+    def geojson_boundary(self):
+        return json.loads(db.session.scalar(func.ST_AsGeoJSON(func.ST_Boundary(self.geo_location))))
+
+    @staticmethod
+    def from_json(json_post):
+        asset_id = json.post.get('asset_id')
+        track_start = json.post.get('track_start')
+        track_end = json_post.get('track_end')
+        geo_location = json_post.get('geo_location')
+
+        return Track(
+            asset_id=asset_id,
+            track_start=track_start,
+            track_end=track_end,
+            geo_location=geo_location)
+
+    def to_json(self):
+        geo_location = None
+        if self.geo_location is not None:
+            json.loads(db.session.scalar(func.ST_AsGeoJSON(self.geo_location)))
+
+        json_track = {
+            'id' : self.id,
+            'asset_id' : self.asset_id,
+            'track_start' : None,
+            'track_end' : None,
+            'geo_location' : geo_location
+        }
+        if self.track_start is not None:
+            json_track['track_start'] = self._pytype(self.track_start)
+        if self.end_date is not None:
+            json_track['track_end'] = self._pytype(self.track_end)
+        return json_track
+
+    def _pytype(self,v):
+        if isinstance(v, datetime):
+            return v.isoformat()
+        return str(v)
+
 class InspectionStatus(db.Model):
     __tablename__ = 'inspection_status'
     __table_args__ = {u'schema': __schema__}
