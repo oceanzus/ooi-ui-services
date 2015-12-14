@@ -15,7 +15,6 @@ import urllib2
 
 
 requests.adapters.DEFAULT_RETRIES = 2
-CACHE_TIMEOUT = 86400
 
 
 @api.route('/get_metadata/<string:ref>', methods=['GET'])

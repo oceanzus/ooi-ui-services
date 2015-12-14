@@ -7,7 +7,7 @@ import requests
 from flask.ext.cache import Cache
 
 
-CACHE_TIMEOUT = 172800
+CACHE_TIMEOUT = current_app.config['CACHE_TIMEOUT']
 
 '''
 Create the celery app, and configure it to talk to the redis broker.

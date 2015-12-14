@@ -12,7 +12,7 @@ import json
 import requests
 
 requests.adapters.DEFAULT_RETRIES = 2
-CACHE_TIMEOUT = 86400
+CACHE_TIMEOUT = current_app.config['CACHE_TIMEOUT']
 
 
 '''

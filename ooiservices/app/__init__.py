@@ -107,7 +107,7 @@ from celery import Celery
 
 def create_celery_app(env, app=None):
     app = app or create_app(env)
-    celery = Celery('__main__', broker='redis://localhost:6379/0')
+    celery = Celery('__main__', broker='{0}/0'.format(app.config['REDIS_URL']))
     celery.conf.update(app.config)
     TaskBase = celery.Task
 

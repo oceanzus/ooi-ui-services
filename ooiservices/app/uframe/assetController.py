@@ -20,7 +20,7 @@ from operator import itemgetter
 from ooiservices.app import cache
 
 requests.adapters.DEFAULT_RETRIES = 2
-CACHE_TIMEOUT = 86400
+CACHE_TIMEOUT = current_app.config['CACHE_TIMEOUT']
 
 
 def _compile_events(data):

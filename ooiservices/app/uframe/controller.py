@@ -38,7 +38,7 @@ __author__ = 'Andy Bird'
 
 
 requests.adapters.DEFAULT_RETRIES = 2
-CACHE_TIMEOUT = 172800
+CACHE_TIMEOUT = current_app.config['CACHE_TIMEOUT']
 
 
 def dfs_streams():
