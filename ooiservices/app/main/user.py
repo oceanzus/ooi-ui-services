@@ -14,6 +14,7 @@ from ooiservices.app.decorators import scope_required
 from ooiservices.app.redmine.routes import redmine_login
 import json, smtplib, string
 import datetime as dt
+import random
 
 @api.route('/user/<int:id>', methods=['GET'])
 @auth.login_required
@@ -115,6 +116,25 @@ def create_user():
 
     try:
         redmine = redmine_login()
+        existing_user = list(redmine.user.filter(name=new_user.email))
+        if not existing_user:
+            user = redmine.user.new()
+            redmine_username = new_user.first_name[0] + new_user.last_name
+            user.login = redmine_username
+            user.password = temp_pass_generator()
+            user.firstname = new_user.first_name
+            user.lastname = new_user.last_name
+            user.mail = new_user.email
+            user.auth_source_id = 1
+            user.mail_notification = 'selected'
+            user.must_change_passwd = True
+            user.save()
+    except Exception as e:
+        current_app.logger.exception("Failed to create a new redmine user")
+        return jsonify(error=e.message), 409
+
+    try:
+        redmine = redmine_login()
         organization = new_user.organization.organization_name
         tmp = dt.datetime.now() + dt.timedelta(days=1)
         due_date = dt.datetime.strftime(tmp, "%Y-%m-%d")
@@ -149,3 +169,6 @@ def get_user_roles():
 def get_users():
     users = [u.to_json() for u in User.query.all()]
     return jsonify(users=users)
+
+def temp_pass_generator(size=6, chars=string.ascii_uppercase + string.digits):
+    return ''.join(random.choice(chars) for _ in range(size))
