@@ -14,7 +14,8 @@ from ooiservices.app.uframe.vocab import (get_vocab, get_vocab_dict_by_rd,
 from ooiservices.app.uframe.uframe_tools import (get_assets_from_uframe, uframe_get_asset_by_id, uframe_get_asset_by_uid)
 from ooiservices.app.uframe.common_tools import (get_asset_classes, get_supported_asset_types, get_location_fields,
                                                  get_asset_type_display_name)
-from ooiservices.app.uframe.asset_cache_tools import (get_asset_rds_cache, asset_rds_cache_update)
+from ooiservices.app.uframe.status_tools import build_rds_cache, get_uid_digests
+
 
 import datetime as dt
 from operator import itemgetter
@@ -26,13 +27,14 @@ STREAM_CACHE_TIMEOUT = 36000
 #from ooiservices.app.uframe.vocab import (get_rs_array_name_by_rd, get_display_name_by_rd)
 #from ooiservices.app.uframe.controller import dfs_streams
 #from ooiservices.app.uframe.deployment_tools import get_deployments_digest
+#from ooiservices.app.uframe.asset_cache_tools import (get_asset_rds_cache, asset_rds_cache_update)
 
 
 
 def verify_cache(refresh=False):
     """ Verify necessary cached objects are available; if not get and set. Return asset_list data.
     """
-    from ooiservices.app.uframe.status_tools import build_rds_cache
+    #from ooiservices.app.uframe.status_tools import build_rds_cache, get_uid_digests
     verify_cache_required = False
     try:
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -40,17 +42,19 @@ def verify_cache(refresh=False):
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         vocab_dict = get_vocab()
         stream_list = get_stream_list()
-        asset_rds = get_asset_rds_cache()
+
+        #asset_rds = get_asset_rds_cache()
+
+        # If full cache update being performed (refresh = True), include 'uid_digests'
+        uid_digests = get_uid_digests(refresh)
 
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         # Check 'asset_list', 'assets_dict', 'asset_rds'
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        if not cache.get('asset_list') or not cache.get('assets_dict'): # or \
-            #not cache.get('asset_rds'):
+        if not cache.get('asset_list') or not cache.get('assets_dict'):
             verify_cache_required = True
 
-        elif cache.get('asset_list') is None or cache.get('assets_dict') is None: # or \
-            #cache.get('asset_rds') is None:
+        elif cache.get('asset_list') is None or cache.get('assets_dict') is None:
             verify_cache_required = True
 
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -69,14 +73,21 @@ def verify_cache(refresh=False):
             data = cache.get('asset_list')
 
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-        # Populate reference designator digest information.
+        # Populate reference designator digest information. (Replace by using uid_digests information)
         #- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
         verify_digests_required = False
         if not cache.get('rd_digests') or not cache.get('rd_digests_dict'):
             verify_digests_required = True
 
-        if refresh or verify_digests_required:
-            rd_digests = build_rds_cache()
+        force_update = False
+        if verify_cache_required or refresh:
+            force_update = True
+        if refresh or verify_digests_required or force_update:
+            rd_digests = build_rds_cache(refresh=force_update)
+            if rd_digests is None or not rd_digests:
+                message = 'Failed to compile reference designator digests.'
+                current_app.logger.info(message)
+                raise Exception(message)
 
         return data
 
@@ -86,6 +97,7 @@ def verify_cache(refresh=False):
         raise Exception(message)
 
 
+'''
 # Get all assets from uframe.
 def get_assets_payload():
     """ Get all assets from uframe, process and update caches for:
@@ -119,6 +131,66 @@ def get_assets_payload():
         if not asset_rds:
             message = 'Unable to process uframe assets; error creating asset_rds.'
             raise Exception(message)
+
+        # Cache 'asset_list'.
+        cache.set('asset_list', data, timeout=CACHE_TIMEOUT)
+        check = cache.get('asset_list')
+        if not check:
+            message = 'Unable to process uframe assets; asset_list data is empty.'
+            raise Exception(message)
+
+        # Cache 'assets_dict'.
+        assets_dict = populate_assets_dict(data)
+        if assets_dict is None:
+            message = 'Empty assets_dict returned from asset data.'
+            raise Exception(message)
+
+        print '\nCompleted compiling assets...\n'
+        return data
+
+    except Exception as err:
+        message = str(err)
+        current_app.logger.info(message)
+        raise Exception(message)
+'''
+
+# Get all assets from uframe.
+def get_assets_payload():
+    """ Get all assets from uframe, process and update caches for:
+            'asset_list', 'assets_dict', 'asset_rds'
+    """
+    time = True
+    try:
+        print '\nCompiling assets...'
+        try:
+            # Clear all cache
+            if cache.get('asset_list'):
+                cache.delete('asset_list')
+            if cache.get('assets_dict'):
+                cache.delete('assets_dict')
+        except Exception as err:
+            message = str(err)
+            raise Exception(message)
+
+        # Get assets from uframe.
+        result = get_assets_from_uframe()
+        if not result:
+            message = 'No uframe asset content returned.'
+            raise Exception(message)
+
+        # Get asset_list and asset_rds.
+        #data, asset_rds = new_compile_assets(result, compile_all=True)
+        data, _ = new_compile_assets(result, compile_all=True)
+        print '\n-- Completed loading assets....'
+        if not data:
+            message = 'Unable to process uframe assets; error creating assets_list.'
+            raise Exception(message)
+
+        """
+        if not asset_rds:
+            message = 'Unable to process uframe assets; error creating asset_rds.'
+            raise Exception(message)
+        """
 
         # Cache 'asset_list'.
         cache.set('asset_list', data, timeout=CACHE_TIMEOUT)
@@ -241,7 +313,9 @@ def get_uframe_asset_by_uid(uid):
 def format_asset_for_ui(modified_asset):
     """ Format uframe asset into ui asset.
     """
+    debug = False
     try:
+        if debug: print '\n debug -- Entered format_asset_for_ui...'
         # Process remoteResources list.
         remoteResources = None
         if 'remoteResources' in modified_asset:
@@ -259,6 +333,8 @@ def format_asset_for_ui(modified_asset):
             raise Exception(message)
         if not updated_asset or updated_asset is None:
             raise Exception('Asset compilation failed to return a result.')
+
+        if debug: print '\n debug -- Exit format_asset_for_ui...'
         return updated_asset
     except Exception as err:
         message = str(err)
@@ -353,325 +429,470 @@ def new_compile_assets(data, compile_all=False):
                 'mindepth': 0.0,
                 'maxdepth': 0.0
             }
+    # Following import will be reviewed and refactored to proper location. (todo)
+    from ooiservices.app.uframe.status_tools import get_uid_digests, uid_digests_cache_update, \
+                                                    get_last_deployment_digest
+
+    len_uframe_assets = len(data)
     try:
+        #===================================================================================
+        # Get asset_rds to assist in process of asset compilation.
+        try:
+            if compile_all:
+                time = True
+                if time: print '\n-- Loading assets from uframe... '
+                start = dt.datetime.now()
+                if time: print '\t-- Start time: ', start
+            update_asset_rds_cache = False
+            #dict_asset_ids = get_asset_rds_cache()
+        except Exception as err:
+            message = 'Error compiling asset_rds: %s' % err.message
+            current_app.logger.info(message)
+            raise Exception(message)
+
+        # Get uid_digests to assist in process of asset compilation.
+        try:
+            update_uid_digests = False
+            uid_digests = get_uid_digests()
+        except Exception as err:
+            message = 'Error compiling uid_digests: %s' % err.message
+            current_app.logger.info(message)
+            raise Exception(message)
+
+        if not uid_digests or uid_digests is None:
+            message = 'Failed to get required uid_digests for processing assets.'
+            raise Exception(message)
+
+        try:
+            _vocab_dict = get_vocab()
+        except Exception as err:
+            message = 'Error compiling asset_rds: %s' % err.message
+            current_app.logger.info(message)
+            raise Exception(message)
+
+        #===================================================================================
+
+
+        # Valid processing types are those assetTypes which are subsequently mapped to reference designators.
+        valid_asset_classes = get_asset_classes()
+        """
+        valid_processing_types_uc = get_supported_asset_types()
+        valid_processing_types = []
+        for type in valid_processing_types_uc:
+            valid_processing_types.append(type.lower())
+        """
+
+        #count = 0
+        lookup_count = 0
+        found_count = 0
+        actual_count = 0
+        for row in data:
+
+            try:
+                # Get asset_id, if not asset_id then continue
+                asset_id = None
+                if 'assetId' in row:
+                    row['id'] = row.pop('assetId')
+                    if not row['id'] or row['id'] is None:
+                        print '\n Asset id value empty or null.'
+                        continue
+                    asset_id = row['id']
+
+                asset_uid = None
+                if 'uid' in row:
+                    row['uid'] = row.pop('uid')
+                    asset_uid = row['uid']
+                if asset_uid is None or not asset_uid or len(asset_uid) == 0:
+                    print '\t-- Note: Asset UID value empty or null; asset id: ', asset_id
+                    continue
+
+                if 'events' in row:
+                    del row['events']
+                if 'calibration' in row:
+                    del row['calibration']
+                if 'remoteResources' in row:
+                    row['remoteResources'] = []
+                #if len(row['remoteResources']) == 0:
+                #    row['remoteResources'] = []
+                row['asset_class'] = row.pop('@class')
+
+                # Gather list of all assetType values RECEIVED (for information only)
+                if row['assetType'] and row['assetType'] is not None:
+                    try:
+                        asset_type = get_asset_type_display_name(row['assetType'])
+                        row['assetType'] = asset_type
+                    except Exception as err:
+                        message = 'get_uframe_asset_type: %s; error: %s' % (row['assetType'], str(err))
+                        current_app.logger.info(message)
+                        continue
+                else:
+                    message = 'Asset (id: %d) has a null or empty assetType value.' % asset_id
+                    current_app.logger.info(message)
+                    continue
+
+                # Use uid_digests to process all assets which may have deployments.
+                current_digest = None
+                digest_rd = None
+                if asset_type in ['Platform', 'Node', 'Instrument']:
+                    actual_count += 1
+                    if asset_uid in uid_digests:
+                        found_count += 1
+                        current_digest = uid_digests[asset_uid]
+                    """
+                    else:
+                        if test:
+                            lookup_count += 1
+                            #print '\n Note: Lookup required for id/uid: %d/%s' % (asset_id, asset_uid)
+                        current_digest = get_last_deployment_digest(asset_uid)
+                        # Add current digest to uid_digests
+                        if current_digest and current_digest is not None:
+                            # Update uid_digests
+                            update_uid_digests = True
+                            uid_digests[asset_uid] = current_digest
+                    """
+
+                    if current_digest is not None:
+                        digest_rd = get_rd_from_uid_digest(asset_type, current_digest)
+                        #if test: print '\n test -- digest_rd: ', digest_rd
+
+                # If ref_des not provided in row, try dictionary lookup.
+                ref_des = None
+                if 'ref_des' in row:
+                    if row['ref_des'] and row['ref_des'] is not None and len(row['ref_des']) != 0:
+                        ref_des = row['ref_des']
+
+                if ref_des is None:
+                    ref_des = digest_rd
+
+                """
+                current_digest = None
+                if ref_des is None:
+                    if asset_type in ['Platform', 'Node', 'Instrument']:
+                        current_digest = get_last_deployment_digest(asset_uid)
+                        if current_digest and current_digest is not None:
+                            if asset_type == 'Platform':
+                                ref_des = current_digest['subsite']
+                            elif asset_type == 'Node':
+                                ref_des = '-'.join([current_digest['subsite'], current_digest['node']])
+                            elif asset_type == 'Instrument':
+                                ref_des = '-'.join([current_digest['subsite'],
+                                                    current_digest['node'],
+                                                    current_digest['sensor']])
+
+                            # If reference designator not available assets_rd, add.
+                            if asset_id in dict_asset_ids:
+                                if ref_des is not None:
+                                    if ref_des not in dict_asset_ids[asset_id]:
+                                        dict_asset_ids[asset_id].append(ref_des)
+                                        update_asset_rds_cache = True
+                                        if test:
+                                            print 'Notes: -- asset id/uid/type: %d/%s/%s  ref_des %s not in %s' % \
+                                                  (asset_id, asset_uid, asset_type, ref_des,dict_asset_ids[asset_id])
+                """
+
+                # Populate manufactureInfo
+                row['manufactureInfo'] = {}
+                row['manufactureInfo']['manufacturer'] = row.pop('manufacturer')
+                row['manufactureInfo']['modelNumber'] = row.pop('modelNumber')
+                row['manufactureInfo']['serialNumber'] = row.pop('serialNumber')
+                row['manufactureInfo']['firmwareVersion'] = row.pop('firmwareVersion')
+                row['manufactureInfo']['softwareVersion'] = row.pop('softwareVersion')
+                row['manufactureInfo']['shelfLifeExpirationDate'] = row.pop('shelfLifeExpirationDate')
+
+                # Populate purchaseAndDeliveryInfo
+                row['purchaseAndDeliveryInfo'] = {}
+                if not row['deliveryDate'] or row['deliveryDate'] is None:
+                    row['purchaseAndDeliveryInfo']['deliveryDate'] = None
+                else:
+                    row['purchaseAndDeliveryInfo']['deliveryDate'] = row.pop('deliveryDate')
+
+                if not row['purchaseDate'] or row['purchaseDate'] is None:
+                    row['purchaseAndDeliveryInfo']['purchaseDate'] = None
+                else:
+                    row['purchaseAndDeliveryInfo']['purchaseDate'] = row.pop('purchaseDate')
+                row['purchaseAndDeliveryInfo']['purchasePrice'] = row.pop('purchasePrice')
+                row['purchaseAndDeliveryInfo']['deliveryOrderNumber'] = row.pop('deliveryOrderNumber')
+
+                # Populate partData
+                row['partData'] = {}
+                row['partData']['ooiPropertyNumber'] = row.pop('ooiPropertyNumber')
+                row['partData']['ooiPartNumber'] = row.pop('ooiPartNumber')
+                row['partData']['ooiSerialNumber'] = row.pop('ooiSerialNumber')
+                row['partData']['institutionPropertyNumber'] = row.pop('institutionPropertyNumber')
+                row['partData']['institutionPurchaseOrderNumber'] = row.pop('institutionPurchaseOrderNumber')
+
+                # Populate physicalInfo dictionary. Move powerRequirements and depthRating into physicalInfo dictionary
+                physicalInfo = {}
+                physicalInfo['height'] = -1.0
+                physicalInfo['weight'] = -1.0
+                physicalInfo['width'] = -1.0
+                physicalInfo['length'] = -1.0
+                physicalInfo['depthRating'] = None
+                physicalInfo['powerRequirements'] = None
+                if 'physicalInfo' in row:
+                    if row['physicalInfo'] or row['physicalInfo'] is not None:
+                        physicalInfo = row.pop('physicalInfo')
+                if 'depthRating' in row:
+                    physicalInfo['depthRating'] = row.pop('depthRating')
+                if 'powerRequirements' in row:
+                    physicalInfo['powerRequirements'] = row.pop('powerRequirements')
+                row['physicalInfo'] = physicalInfo
+
+                # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                # Get asset class based on reference designator
+                # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                if not row['asset_class'] or row['asset_class'] is None:
+                    message = 'asset_class empty or null for asset id %d.' % asset_id
+                    current_app.logger.info(message)
+                    continue
+
+                # Validate asset_class, log asset class if unknown.
+                asset_class = row.pop('asset_class')
+                if asset_class not in valid_asset_classes:
+                    if info:
+                        message = 'Asset class value (%s) not one of: %s' % (asset_class, valid_asset_classes)
+                        current_app.logger.info(message)
+                    continue
+
+                # Set default field values for assets without deployment/reference designators.
+                row['deployment_number'] = ''
+                row['deployment_numbers'] = []
+                if 'lastModifiedTimestamp' in row:
+                    del row['lastModifiedTimestamp']
+
+                # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                # Prepare assetInfo dictionary, populate with information or defaults.
+                # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                row['assetInfo'] = deepcopy(base_asset_info)
+
+                # Asset owner
+                row['assetInfo']['owner'] = row.pop('owner')
+
+                # Populate assetInfo 'type' with uframe provided assetType.
+                row['assetInfo']['type'] = asset_type
+
+                # Verify all necessary attributes are available, if not create and set to empty.
+                if row['name']:
+                    row['assetInfo']['asset_name'] = row.pop('name')
+                if row['description']:
+                    row['assetInfo']['description'] = row.pop('description')
+
+                row['ref_des'] = None
+
+                # Handle location information (if provided in asset, not required)
+                latitude = None
+                longitude = None
+                depth = None
+                orbitRadius = None
+                deployment_number = ''  # The deploymentNumber is converted to string for UI client
+                """
+                # The uframe asset 'location' is optional and not reflective of deployment information at this time.
+                # It is also a read-only item in the asset, intended to provide a view of asset deployment location.
+                # Use data derived from asset/deployment/uid query instead until further notice.
+                if 'location' in row and row['location'] is not None:
+                        tmp = deepcopy(row['location'])
+                        latitude, longitude, depth, orbitRadius, loc_list = get_location_fields(tmp)
+                """
+
+                if current_digest is not None:
+                    latitude = current_digest['latitude']
+                    longitude = current_digest['longitude']
+                    depth = current_digest['depth']
+                    orbitRadius = current_digest['orbitRadius']
+                    deploymentNumber = current_digest['deploymentNumber']
+                    if deploymentNumber is not None:
+                        deployment_number = str(deploymentNumber)
+
+                row['latitude'] = latitude
+                row['longitude'] = longitude
+                row['depth'] = depth
+                row['orbitRadius'] = orbitRadius
+                row['deployment_number'] = deployment_number
+                if 'location' in row:
+                    del row['location']
+
+                #===========================================================================================
+                if ref_des:
+                    # Set row values with reference designator
+                    row['ref_des'] = ref_des
+
+                    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                    # Populate assetInfo dictionary
+                    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+                    try:
+                        # Get vocabulary dict for ref_des; contains name, long_name, mindepth, maxdepth, model, manufacturer
+                        name = None
+                        longName = None
+                        mindepth = 0.0
+                        maxdepth = 0.0
+                        #vocab_dict = get_vocab_dict_by_rd(ref_des)
+                        if ref_des in _vocab_dict:
+                            vocab_dict = _vocab_dict[ref_des]
+                        else:
+                            vocab_dict = None
+                        if vocab_dict or vocab_dict is not None:
+                            row['assetInfo']['mindepth'] = vocab_dict['mindepth']
+                            row['assetInfo']['maxdepth'] = vocab_dict['maxdepth']
+                            name = vocab_dict['name']
+                            longName = vocab_dict['long_name']
+                        else:
+                            row['assetInfo']['mindepth'] = mindepth
+                            row['assetInfo']['maxdepth'] = maxdepth
+
+                        # Populate assetInfo - name, if failure to get display name, use ref_des, log failure.
+                        if name is None:
+                            if ref_des not in vocab_failures:
+                                vocab_failures.append(ref_des)
+                            if info:
+                                message = 'Vocab Note ----- reference designator (%s) failed to get display name for:' % ref_des
+                                current_app.logger.info(message)
+                            name = ref_des
+                        row['assetInfo']['name'] = name
+
+                        # Populate assetInfo - long name, if failure to get long name then use ref_des, log failure.
+                        if longName is None:
+                            if ref_des not in vocab_failures:
+                                vocab_failures.append(ref_des)
+                            if info:
+                                message = 'Vocab Note ----- reference designator (%s) failed to get display name for:' % ref_des
+                                current_app.logger.info(message)
+                            longName = ref_des
+                        row['assetInfo']['longName'] = longName
+
+                        # Populate assetInfo - array and assembly
+                        if len(ref_des) >= 8:
+                            if ref_des[:2] == 'RS':
+                                row['assetInfo']['array'] = get_rs_array_name_by_rd(ref_des[:8])
+                            else:
+                                row['assetInfo']['array'] = get_display_name_by_rd(ref_des[:2])
+                        if len(ref_des) >= 14:
+                            row['assetInfo']['assembly'] = get_display_name_by_rd(ref_des[:14])
+                        #=============================================================================
+                    except Exception as err:
+                        # asset info error
+                        message = 'asset (with rd) processing error: ' + str(err.message)
+                        current_app.logger.info(message)
+                        continue
+
+                #===========================================================================================
+                # Add new row to output dictionary
+                if asset_id:
+                    new_data.append(row)
+
+                    """
+                    # if new item for dictionary of asset ids, add id with value of reference designator
+                    if asset_id not in dict_asset_ids:
+                        if ref_des:
+                            if ref_des is not None:
+                                dict_asset_ids[asset_id] = [ref_des]
+                                update_asset_rds_cache = True
+                    """
+
+            except Exception as err:
+                message = str(err)
+                current_app.logger.info(message)
+                continue
+            # end of asset processing loop
+            #- - - - - - - - - - - - - - -
+            #count += 1
+            #if count >= 20:
+            #    break
+
         if compile_all:
-            time = True
-            if time: print '\n-- Loading assets from uframe... '
-            start = dt.datetime.now()
-            if time: print '\t-- Start time: ', start
-        update_asset_rds_cache = False
-        dict_asset_ids = get_asset_rds_cache()
+            # Log vocabulary failures (occur when creating display names)
+            if vocab_failures:
+                vocab_failures.sort()
+                message = 'These reference designator(s) are not defined, causing display name failures(%d): %s' \
+                          % (len(vocab_failures), vocab_failures)
+                current_app.logger.info(message)
+
+            """
+            # Amend 'dict_asset_ids' to reflect information from processing
+            if dict_asset_ids:
+                if update_asset_rds_cache:
+                    asset_rds_cache_update(dict_asset_ids)
+            """
+
+            if uid_digests:
+                if update_uid_digests:
+                    uid_digests_cache_update(uid_digests)
+
+            if test:
+                print '\n Number of assets from uframe: ', len_uframe_assets
+                print '\n Assets with deployment identified: ', found_count
+                print '\n Assets identified: ', actual_count
+                if found_count > 0:
+                    print '\n Percentage of assets (platform, node, instrument) with deployment information: ', \
+                        float(found_count)/float(actual_count)
+                    print '\n-- Percentage of all assets with deployment information: ', \
+                        float(actual_count)/float(len_uframe_assets)
+                else:
+                    print '\n No platform, node, instrument assets found with deployment information.'
+            print '\t-- Total number of assets compiled: ', len(new_data)
+
+        if time:
+            end = dt.datetime.now()
+            if time: print '\t-- End time:   ', end
+            if time: print '\t-- Time to load uframe assets: %s' % str(end - start)
+        return new_data, None #dict_asset_ids
+
     except Exception as err:
-        message = 'Error compiling asset_rds: %s' % err.message
+        message = 'Error compiling assets: %s' % err.message
         current_app.logger.info(message)
         raise Exception(message)
 
-    # Valid processing types are those assetTypes which are subsequently mapped to reference designators.
-    valid_asset_classes = get_asset_classes()
-    valid_processing_types_uc = get_supported_asset_types()
-    valid_processing_types = []
-    for type in valid_processing_types_uc:
-        valid_processing_types.append(type.lower())
-    #asset_supported_types = get_supported_asset_types()
-    #count = 0
 
-    # Following import will be reviewed and refactored to proper location. (todo)
-    from ooiservices.app.uframe.status_tools import get_last_deployment_digest
-    for row in data:
-
-        try:
-            # Get asset_id, if not asset_id then continue
-            asset_id = None
-            if 'assetId' in row:
-                row['id'] = row.pop('assetId')
-                if not row['id'] or row['id'] is None:
-                    print '\n Asset id value empty or null.'
-                    continue
-                asset_id = row['id']
-
-            asset_uid = None
-            if 'uid' in row:
-                row['uid'] = row.pop('uid')
-                asset_uid = row['uid']
-            if asset_uid is None or not asset_uid or len(asset_uid) == 0:
-                print '\t-- Note: Asset UID value empty or null; asset id: ', asset_id
-                continue
-
-            if 'events' in row:
-                del row['events']
-            if 'calibration' in row:
-                del row['calibration']
-            if 'remoteResources' in row:
-                row['remoteResources'] = []
-            #if len(row['remoteResources']) == 0:
-            #    row['remoteResources'] = []
-            row['asset_class'] = row.pop('@class')
-
-            # Gather list of all assetType values RECEIVED (for information only)
-            if row['assetType'] and row['assetType'] is not None:
-                try:
-                    asset_type = get_asset_type_display_name(row['assetType'])
-                    row['assetType'] = asset_type
-                except Exception as err:
-                    message = 'get_uframe_asset_type: %s; error: %s' % (row['assetType'], str(err))
-                    current_app.logger.info(message)
-                    continue
-            else:
-                message = 'Asset (id: %d) has a null or empty assetType value.' % asset_id
-                current_app.logger.info(message)
-                continue
-
-            # If ref_des not provided in row, try dictionary lookup.
-            current_digest = None
-            ref_des = None
-            if 'ref_des' in row:
-                if row['ref_des'] and row['ref_des'] is not None and len(row['ref_des']) != 0:
-                    ref_des = row['ref_des']
-
-            if ref_des is None:
-                if asset_type in ['Platform', 'Node', 'Instrument']:
-                    current_digest = get_last_deployment_digest(asset_uid)
-                    if current_digest and current_digest is not None:
-                        if asset_type == 'Platform':
-                            ref_des = current_digest['subsite']
-                        elif asset_type == 'Node':
-                            ref_des = '-'.join([current_digest['subsite'], current_digest['node']])
-                        elif asset_type == 'Instrument':
-                            ref_des = '-'.join([current_digest['subsite'],
-                                                current_digest['node'],
-                                                current_digest['sensor']])
-
-                        # If reference designator not available assets_rd, add.
-                        if asset_id in dict_asset_ids:
-                            if ref_des is not None:
-                                if ref_des not in dict_asset_ids[asset_id]:
-                                    dict_asset_ids[asset_id].append(ref_des)
-                                    update_asset_rds_cache = True
-                                    if test:
-                                        print 'Notes: -- asset id/uid/type: %d/%s/%s  ref_des %s not in %s' % \
-                                              (asset_id, asset_uid, asset_type, ref_des,dict_asset_ids[asset_id])
-
-
-            # Populate manufactureInfo
-            row['manufactureInfo'] = {}
-            row['manufactureInfo']['manufacturer'] = row.pop('manufacturer')
-            row['manufactureInfo']['modelNumber'] = row.pop('modelNumber')
-            row['manufactureInfo']['serialNumber'] = row.pop('serialNumber')
-            row['manufactureInfo']['firmwareVersion'] = row.pop('firmwareVersion')
-            row['manufactureInfo']['softwareVersion'] = row.pop('softwareVersion')
-            row['manufactureInfo']['shelfLifeExpirationDate'] = row.pop('shelfLifeExpirationDate')
-
-            # Populate purchaseAndDeliveryInfo
-            row['purchaseAndDeliveryInfo'] = {}
-            if not row['deliveryDate'] or row['deliveryDate'] is None:
-                row['purchaseAndDeliveryInfo']['deliveryDate'] = None
-            else:
-                row['purchaseAndDeliveryInfo']['deliveryDate'] = row.pop('deliveryDate')
-
-            if not row['purchaseDate'] or row['purchaseDate'] is None:
-                row['purchaseAndDeliveryInfo']['purchaseDate'] = None
-            else:
-                row['purchaseAndDeliveryInfo']['purchaseDate'] = row.pop('purchaseDate')
-            row['purchaseAndDeliveryInfo']['purchasePrice'] = row.pop('purchasePrice')
-            row['purchaseAndDeliveryInfo']['deliveryOrderNumber'] = row.pop('deliveryOrderNumber')
-
-            # Populate partData
-            row['partData'] = {}
-            row['partData']['ooiPropertyNumber'] = row.pop('ooiPropertyNumber')
-            row['partData']['ooiPartNumber'] = row.pop('ooiPartNumber')
-            row['partData']['ooiSerialNumber'] = row.pop('ooiSerialNumber')
-            row['partData']['institutionPropertyNumber'] = row.pop('institutionPropertyNumber')
-            row['partData']['institutionPurchaseOrderNumber'] = row.pop('institutionPurchaseOrderNumber')
-
-            # Populate physicalInfo dictionary. Move powerRequirements and depthRating into physicalInfo dictionary
-            physicalInfo = {}
-            physicalInfo['height'] = -1.0
-            physicalInfo['weight'] = -1.0
-            physicalInfo['width'] = -1.0
-            physicalInfo['length'] = -1.0
-            physicalInfo['depthRating'] = None
-            physicalInfo['powerRequirements'] = None
-            if 'physicalInfo' in row:
-                if row['physicalInfo'] or row['physicalInfo'] is not None:
-                    physicalInfo = row.pop('physicalInfo')
-            if 'depthRating' in row:
-                physicalInfo['depthRating'] = row.pop('depthRating')
-            if 'powerRequirements' in row:
-                physicalInfo['powerRequirements'] = row.pop('powerRequirements')
-            row['physicalInfo'] = physicalInfo
-
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-            # Get asset class based on reference designator
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-            if not row['asset_class'] or row['asset_class'] is None:
-                message = 'asset_class empty or null for asset id %d.' % asset_id
-                current_app.logger.info(message)
-                continue
-
-            # Validate asset_class, log asset class if unknown.
-            asset_class = row.pop('asset_class')
-            if asset_class not in valid_asset_classes:
-                if info:
-                    message = 'Asset class value (%s) not one of: %s' % (asset_class, valid_asset_classes)
-                    current_app.logger.info(message)
-                continue
-
-            # Set default field values for assets without deployment/reference designators.
-            row['deployment_number'] = ''
-            row['deployment_numbers'] = []
-            if 'lastModifiedTimestamp' in row:
-                del row['lastModifiedTimestamp']
-
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-            # Prepare assetInfo dictionary, populate with information or defaults.
-            # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-            row['assetInfo'] = deepcopy(base_asset_info)
-
-            # Asset owner
-            row['assetInfo']['owner'] = row.pop('owner')
-
-            # Populate assetInfo 'type' with uframe provided assetType.
-            row['assetInfo']['type'] = asset_type
-
-            # Verify all necessary attributes are available, if not create and set to empty.
-            if row['name']:
-                row['assetInfo']['asset_name'] = row.pop('name')
-            if row['description']:
-                row['assetInfo']['description'] = row.pop('description')
-
-            row['ref_des'] = None
-
-            # Handle location information (if provided in asset, not required)
-            latitude = None
-            longitude = None
-            depth = None
-            orbitRadius = None
-            """
-            # Asset location is optional and not reflective of deployment information at this time.
-            # Use data derived from asset/deployment/uid query instead until further notice.
-            if 'location' in row and row['location'] is not None:
-                    tmp = deepcopy(row['location'])
-                    latitude, longitude, depth, orbitRadius, loc_list = get_location_fields(tmp)
-            """
-
-            if current_digest is not None:
-                latitude = current_digest['latitude']
-                longitude = current_digest['longitude']
-                depth = current_digest['depth']
-                orbitRadius = current_digest['orbitRadius']
-            row['latitude'] = latitude
-            row['longitude'] = longitude
-            row['depth'] = depth
-            row['orbitRadius'] = orbitRadius
-            if 'location' in row:
-                del row['location']
-
-            #===========================================================================================
-            if ref_des:
-                # Set row values with reference designator
-                row['ref_des'] = ref_des
-
-                # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-                # Populate assetInfo dictionary
-                # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-                try:
-                    # Get vocabulary dict for ref_des; contains name, long_name, mindepth, maxdepth, model, manufacturer
-                    name = None
-                    longName = None
-                    mindepth = 0.0
-                    maxdepth = 0.0
-                    vocab_dict = get_vocab_dict_by_rd(ref_des)
-                    if vocab_dict:
-                        row['assetInfo']['mindepth'] = vocab_dict['mindepth']
-                        row['assetInfo']['maxdepth'] = vocab_dict['maxdepth']
-                        name = vocab_dict['name']
-                        longName = vocab_dict['long_name']
-                    else:
-                        row['assetInfo']['mindepth'] = mindepth
-                        row['assetInfo']['maxdepth'] = maxdepth
-
-                    # Populate assetInfo - name, if failure to get display name, use ref_des, log failure.
-                    if name is None:
-                        if ref_des not in vocab_failures:
-                            vocab_failures.append(ref_des)
-                        if info:
-                            message = 'Vocab Note ----- reference designator (%s) failed to get display name for:' % ref_des
-                            current_app.logger.info(message)
-                        name = ref_des
-                    row['assetInfo']['name'] = name
-
-                    # Populate assetInfo - long name, if failure to get long name then use ref_des, log failure.
-                    if longName is None:
-                        if ref_des not in vocab_failures:
-                            vocab_failures.append(ref_des)
-                        if info:
-                            message = 'Vocab Note ----- reference designator (%s) failed to get display name for:' % ref_des
-                            current_app.logger.info(message)
-                        longName = ref_des
-                    row['assetInfo']['longName'] = longName
-
-                    # Populate assetInfo - array and assembly
-                    if len(ref_des) >= 8:
-                        if ref_des[:2] == 'RS':
-                            row['assetInfo']['array'] = get_rs_array_name_by_rd(ref_des[:8])
-                        else:
-                            row['assetInfo']['array'] = get_display_name_by_rd(ref_des[:2])
-                    if len(ref_des) >= 14:
-                        row['assetInfo']['assembly'] = get_display_name_by_rd(ref_des[:14])
-                    #=============================================================================
-                except Exception as err:
-                    # asset info error
-                    message = 'asset (with rd) processing error: ' + str(err.message)
-                    current_app.logger.info(message)
-                    continue
-
-            #===========================================================================================
-            # Add new row to output dictionary
-            if asset_id:
-                new_data.append(row)
-                # if new item for dictionary of asset ids, add id with value of reference designator
-                if asset_id not in dict_asset_ids:
-                    if ref_des:
-                        if ref_des is not None:
-                            dict_asset_ids[asset_id] = [ref_des]
-                            update_asset_rds_cache = True
-        except Exception as err:
-            message = str(err)
+def get_rd_from_uid_digest(asset_type, digest):
+    """
+    Get reference designator from a single uid digest of a specific asset type.
+    """
+    try:
+        if asset_type not in ['Platform', 'Node', 'Instrument']:
+            message = 'Invalid asset type (\'%s\') provided to get_rd_from_uid_digest.' % asset_type
             current_app.logger.info(message)
-            continue
-        # end of asset processing loop
-        #- - - - - - - - - - - - - - -
-        """
-        count += 1
-        if count >= 20:
-            break
-        """
+            return None
 
-    if compile_all:
-        # Log vocabulary failures (occur when creating display names)
-        if vocab_failures:
-            vocab_failures.sort()
-            message = 'These reference designator(s) are not defined, causing display name failures(%d): %s' \
-                      % (len(vocab_failures), vocab_failures)
+        if not digest or digest is None or len(digest) == 0:
+            message = 'Empty or null digest provided to get_rd_from_uid_digest for %s.' % asset_type
             current_app.logger.info(message)
+            return None
 
-        # Amend 'dict_asset_ids' to reflect information from processing
-        if dict_asset_ids:
-            if update_asset_rds_cache:
-                asset_rds_cache_update(dict_asset_ids)
-        print '\t-- Total number of assets compiled: ', len(new_data)
+        if 'subsite' not in digest or 'node' not in digest or 'sensor' not in digest:
+            message = 'Digest provided does not contain one or more required attribute(s) (subsite, node, sensor).'
+            current_app.logger.info(message)
+            return None
 
-    if time:
-        end = dt.datetime.now()
-        if time: print '\t-- End time:   ', end
-        if time: print '\t-- Time to load uframe assets: %s' % str(end - start)
-    return new_data, dict_asset_ids
+        if digest['subsite'] is None or not digest['subsite']:
+            message = 'Digest contains null or empty value for \'subsite\'.'
+            current_app.logger.info(message)
+            return None
+        if digest['node'] is None or not digest['node']:
+            message = 'Digest contains null or empty value for \'node\'.'
+            current_app.logger.info(message)
+            return None
+        if digest['sensor'] is None or not digest['sensor']:
+            message = 'Digest contains null or empty value for \'sensor\'.'
+            current_app.logger.info(message)
+            return None
+
+        if asset_type == 'Platform':
+            rd = digest['subsite']
+        elif asset_type == 'Node':
+            rd = '-'.join([digest['subsite'], digest['node']])
+        elif asset_type == 'Instrument':
+            rd = '-'.join([digest['subsite'], digest['node'], digest['sensor']])
+        else:
+            rd = None
+        return rd
+    except Exception as err:
+        message = 'Error getting reference designator for %s: %s' % (asset_type, str(err))
+        current_app.logger.info(message)
+        raise Exception(message)
 
 
 def _get_assets(use_min=False, sort=None, geoJSON=False):
     """
     """
-    debug = True
     try:
         # Verify asset information available before continuing, if failure raise internal server error.
         try:
@@ -891,7 +1112,7 @@ def arrays_geojson():
       }
     },
     """
-    debug = True
+    debug = False
     return_list = []
     from ooiservices.app.uframe.status_tools import get_status_arrays
     try:
@@ -1105,3 +1326,17 @@ def get_digest_reference_designator(digest, assetType):
         message = str(err)
         raise Exception(message)
 '''
+
+
+def get_asset_list():
+    results = []
+    try:
+        data = verify_cache()
+        if not data or data is None:
+            return results
+        else:
+            results = data
+        return results
+    except Exception as err:
+        message = str(err)
+        raise Exception(message)
